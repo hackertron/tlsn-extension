@@ -1,11 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './Chat.css';
-import { useRequests } from '../../reducers/requests';  // Import the requests hook
+import { useRequests } from '../../reducers/requests';
+import { extractBodyFromResponse } from '../../utils/misc';
+import { extractJsonFromMessage } from './extractjson';
 
 interface Message {
     id: number;
     text: string;
     sender: 'user' | 'bot';
+}
+
+interface CapturedData {
+    request: string;
+    headers: Record<string, string>;
+    response: string;
+}
+
+interface RequestData {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body?: string;
 }
 
 const Chat: React.FC = () => {
@@ -14,10 +29,12 @@ const Chat: React.FC = () => {
         return savedMessages ? JSON.parse(savedMessages) : [];
     });
     const [inputMessage, setInputMessage] = useState('');
+    const [allRequests, setAllRequests] = useState<RequestData[]>([]);
     const [isConnected, setIsConnected] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
     const [chatId, setChatId] = useState<string | null>(null);
-    const requests = useRequests(); // Fetch all requests
+    const requests = useRequests();
+    const [capturedData, setCapturedData] = useState<CapturedData[]>([]);
 
     useEffect(() => {
         localStorage.setItem('chatMessages', JSON.stringify(messages));
@@ -56,6 +73,52 @@ const Chat: React.FC = () => {
         }
     };
 
+    const captureRequestAndResponse = useCallback(async (req: RequestData) => {
+        try {
+            const response = await fetch(req.url, {
+                method: req.method,
+                headers: req.headers,
+                body: req.body,
+            });
+            const responseText = await extractBodyFromResponse(response);
+            const headers: Record<string, string> = {};
+            response.headers.forEach((value, key) => {
+                headers[key] = value;
+            });
+            setCapturedData(prevData => [...prevData, {
+                request: `${req.method} ${req.url}`,
+                headers,
+                response: responseText,
+            }]);
+        } catch (error) {
+            console.error('Error capturing request and response:', error);
+        }
+    }, []);
+
+    const fetchMultipleRequests = async (requests: RequestData[]) => {
+        try {
+            const fetchPromises = requests.map(async (req) => {
+                const response = await fetch(req.url, {
+                    method: req.method,
+                    headers: req.headers,
+                });
+                const responseText = await response.text();
+                return {
+                    request: `${req.method} ${req.url}`,
+                    headers: req.headers,
+                    response: responseText,
+                };
+            });
+
+            const responses = await Promise.all(fetchPromises);
+
+            // Store all responses and send them to the server
+            setCapturedData(prevData => [...prevData, ...responses]);
+        } catch (error) {
+            console.error('Error fetching multiple requests:', error);
+        }
+    };
+
     const connectWebSocket = async (id: string) => {
         return new Promise<void>((resolve, reject) => {
             socketRef.current = new WebSocket(`ws://localhost:8000/ws/${id}`);
@@ -75,11 +138,40 @@ const Chat: React.FC = () => {
                 setMessages((prevMessages) => [...prevMessages, botResponse]);
                 console.log('Bot response:', botResponse.text);
 
-                // Detect if server response contains "Sample Requests and Responses"
-                if (botResponse.text.includes("Sample Requests and Responses")) {
-                    // Populate the input with request data
+                if (botResponse.text.includes("send_request_function")) {
                     const requestDetails = requests.map(req => `${req.method} ${req.url}`).join('\n');
+                    setAllRequests(requests.map(req => ({
+                        method: req.method,
+                        url: req.url,
+                        headers: req.requestHeaders.reduce((acc: { [key: string]: string }, h: any) => {
+                            if (h.name && h.value) acc[h.name] = h.value;
+                            return acc;
+                        }, {}),
+                    })));
+
+                    console.log("All requests:", allRequests);
                     setInputMessage(requestDetails);
+                }
+
+                if (botResponse.text.includes("send_response_function")) {
+                    const regex = /send_response_function\s*:\s*(\[.*?\])/s;
+                    const match = botResponse.text.match(regex);
+                    if (!match) {
+                        console.error("No JSON-like content found in the message");
+                        return;
+                    }
+                    const requestArrayString = match[1];
+                    console.log("JSON-like string:", requestArrayString);
+                    try {
+
+                        const requestArray: RequestData[] = JSON.parse(requestArrayString);
+                        // Handle multiple filtered requests
+                        fetchMultipleRequests(requestArray);
+                    } catch (error) {
+                        console.error("Error parsing JSON:", error);
+                    }
+                    const response_message = capturedData.map(data => data.response).join('\n');
+                    setInputMessage(response_message);
                 }
             };
 
@@ -94,6 +186,15 @@ const Chat: React.FC = () => {
             };
         });
     };
+
+    useEffect(() => {
+        // Send captured data to the server after fetching
+        if (capturedData.length > 0 && isConnected) {
+            const capturedDataMessage = JSON.stringify(capturedData);
+            socketRef.current?.send(capturedDataMessage);
+            setCapturedData([]); // Clear captured data after sending
+        }
+    }, [capturedData, isConnected]);
 
     const sendMessage = () => {
         if (inputMessage.trim() === '' || !isConnected) return;
@@ -116,6 +217,9 @@ const Chat: React.FC = () => {
 
     const clearChat = () => {
         setMessages([]);
+        setAllRequests([]);
+        setCapturedData([]);
+
     };
 
     return (
