@@ -98,11 +98,18 @@ const Chat: React.FC = () => {
     const fetchMultipleRequests = async (requests: RequestData[]) => {
         try {
             const fetchPromises = requests.map(async (req) => {
+                if (req.headers === null || req.headers === undefined) {
+                    req.headers = {};
+                }
+                if (req.body === null || req.body === undefined) {
+                    req.body = '';
+                }
                 const response = await fetch(req.url, {
                     method: req.method,
                     headers: req.headers,
                 });
                 const responseText = await response.text();
+                console.log("responseText : ", responseText);
                 return {
                     request: `${req.method} ${req.url}`,
                     headers: req.headers,
@@ -111,9 +118,15 @@ const Chat: React.FC = () => {
             });
 
             const responses = await Promise.all(fetchPromises);
+            console.log("responses:", responses);
 
             // Store all responses and send them to the server
             setCapturedData(prevData => [...prevData, ...responses]);
+
+            // Update input message with the response
+            const response_message = responses.map(data => data.response).join('\n');
+            console.log("response_message : ", response_message);
+            setInputMessage(response_message);
         } catch (error) {
             console.error('Error fetching multiple requests:', error);
         }
@@ -139,22 +152,27 @@ const Chat: React.FC = () => {
                 console.log('Bot response:', botResponse.text);
 
                 if (botResponse.text.includes("send_request_function")) {
-                    const requestDetails = requests.map(req => `${req.method} ${req.url}`).join('\n');
-                    setAllRequests(requests.map(req => ({
+                    const updatedRequests = requests.map(req => ({
                         method: req.method,
                         url: req.url,
                         headers: req.requestHeaders.reduce((acc: { [key: string]: string }, h: any) => {
                             if (h.name && h.value) acc[h.name] = h.value;
                             return acc;
                         }, {}),
-                    })));
+                    }));
 
-                    console.log("All requests:", allRequests);
+                    setAllRequests(updatedRequests);
+
+                    const requestDetails = updatedRequests.map(req =>
+                        `${req.method} ${req.url}\nHeaders: ${JSON.stringify(req.headers, null, 2)}`
+                    ).join('\n\n');
+
+                    console.log("All requests:", updatedRequests);
                     setInputMessage(requestDetails);
                 }
 
                 if (botResponse.text.includes("send_response_function")) {
-                    const regex = /send_response_function\s*:\s*(\[.*?\])/s;
+                    const regex = /"send_response_function"\s*:\s*(\[.*?\])/s;
                     const match = botResponse.text.match(regex);
                     if (!match) {
                         console.error("No JSON-like content found in the message");
@@ -163,15 +181,17 @@ const Chat: React.FC = () => {
                     const requestArrayString = match[1];
                     console.log("JSON-like string:", requestArrayString);
                     try {
-
                         const requestArray: RequestData[] = JSON.parse(requestArrayString);
+                        requestArray.forEach(req => {
+                            console.log("req.method : ", req.method);
+                            console.log("req.url : ", req.url);
+                            console.log("req.headers : ", req.headers);
+                        });
                         // Handle multiple filtered requests
                         fetchMultipleRequests(requestArray);
                     } catch (error) {
                         console.error("Error parsing JSON:", error);
                     }
-                    const response_message = capturedData.map(data => data.response).join('\n');
-                    setInputMessage(response_message);
                 }
             };
 
@@ -219,7 +239,6 @@ const Chat: React.FC = () => {
         setMessages([]);
         setAllRequests([]);
         setCapturedData([]);
-
     };
 
     return (
