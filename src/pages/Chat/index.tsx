@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './Chat.css';
 import { useRequests } from '../../reducers/requests';
 import { extractBodyFromResponse } from '../../utils/misc';
+import axios from 'axios';
 
 interface Message {
     id: number;
@@ -209,6 +210,37 @@ const Chat: React.FC = () => {
                             console.error("Error parsing JSON:", error);
                         }
                     }
+                }
+
+                try {
+                    const jsonResponse = JSON.parse(botResponse.text);
+                    if (jsonResponse && typeof jsonResponse === 'object' && 'config.json' in jsonResponse && 'index.ts' in jsonResponse && 'index.d.ts' in jsonResponse && 'hf.js' in jsonResponse) {
+                        const GITHUB_OWNER = 'hackertron';
+                        const GITHUB_REPO = 'TLSN-plugin-compiler';
+                        const GITHUB_TOKEN = 'GITHUB_PERSONAL_ACCESS_TOKEN';
+                        const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`;
+
+                        axios.post(
+                            url,
+                            {
+                                event_type: 'build_pipeline',
+                                client_payload: jsonResponse
+                            },
+                            {
+                                headers: {
+                                    'Accept': 'application/vnd.github.v3+json',
+                                    'Authorization': `token ${GITHUB_TOKEN}`,
+                                    'Content-Type': 'application/json'
+                                }
+                            }
+                        ).then(response => {
+                            console.log('Pipeline triggered successfully:', response.status);
+                        }).catch(error => {
+                            console.error('Error triggering the pipeline:', error.response ? error.response.data : error.message);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error parsing JSON response:', error);
                 }
             };
 
