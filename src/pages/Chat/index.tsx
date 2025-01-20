@@ -235,6 +235,11 @@ const Chat: React.FC = () => {
                             }
                         ).then(response => {
                             console.log('Pipeline triggered successfully:', response.status);
+                            setMessages((prevMessages) => [...prevMessages, {
+                                id: Date.now(),
+                                text: 'Pipeline triggered successfully. Follow the pipeline and download the wasm from here: https://github.com/hackertron/TLSN-plugin-compiler/actions',
+                                sender: 'bot',
+                            }]);
                         }).catch(error => {
                             console.error('Error triggering the pipeline:', error.response ? error.response.data : error.message);
                         });
