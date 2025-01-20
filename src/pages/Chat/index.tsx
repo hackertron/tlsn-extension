@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './Chat.css';
 import { useRequests } from '../../reducers/requests';
 import { extractBodyFromResponse } from '../../utils/misc';
+import axios from 'axios';
 
 interface Message {
     id: number;
@@ -210,7 +211,57 @@ const Chat: React.FC = () => {
                         }
                     }
                 }
-            };
+
+                if (botResponse.text.includes("config.json") && botResponse.text.includes("index.ts") && botResponse.text.includes("index.d.ts")) {
+                    console.log('Triggering pipeline');
+                    try {
+                        console.log("botresponse.text type : ", typeof botResponse.text);
+                        const jsonResponse = JSON.parse(botResponse.text);
+                        console.log('JSON response:', jsonResponse);
+                        console.log("type  : ", typeof jsonResponse);
+                        console.log("config.json  : ", jsonResponse['config.json']);
+                        console.log("index.ts  : ", jsonResponse['index.ts']);
+                        console.log("index.d.ts  : ", jsonResponse['index.d.ts']);
+                        if (jsonResponse && typeof jsonResponse === 'object' && 'config.json' in jsonResponse && 'index.ts' in jsonResponse && 'index.d.ts' in jsonResponse) {
+                            console.log("valid object");
+                            const GITHUB_OWNER = 'owner';
+                            const GITHUB_REPO = 'repo';
+                            const GITHUB_TOKEN = 'token';
+                            const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`;
+
+                            axios.post(
+                                url,
+                                {
+                                    event_type: 'build_pipeline',
+                                    client_payload: {
+                                        "config.json": Buffer.from(jsonResponse['config.json']).toString('base64'),
+                                        "index.ts": Buffer.from(jsonResponse['index.ts']).toString('base64'),
+                                        "index.d.ts": Buffer.from(jsonResponse['index.d.ts']).toString('base64'),
+                                    }
+                                },
+                                {
+                                    headers: {
+                                        'Accept': 'application/vnd.github.v3+json',
+                                        'Authorization': `token ${GITHUB_TOKEN}`,
+                                        'Content-Type': 'application/json'
+                                    }
+                                }
+                            ).then(response => {
+                                console.log('Pipeline triggered successfully:', response.status);
+                                setMessages((prevMessages) => [...prevMessages, {
+                                    id: Date.now(),
+                                    text: 'Pipeline triggered successfully. Follow the pipeline and download the wasm from here: https://github.com/hackertron/TLSN-plugin-compiler/actions',
+                                    sender: 'bot',
+                                }]);
+                            }).catch(error => {
+                                console.error('Error triggering the pipeline:', error.response ? error.response.data : error.message);
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error parsing JSON response:', error);
+                    }
+                };
+            }
 
             socketRef.current.onclose = () => {
                 console.log('WebSocket connection closed');
